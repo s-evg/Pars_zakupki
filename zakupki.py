@@ -1,9 +1,9 @@
 #!/venv/bin/python
 """developer s-evg | https://github.com/s-evg"""
-from pprint import pprint
 
 from bs4 import BeautifulSoup as bs
-import requests, time, random, logging
+import time
+import logging
 import openpyxl
 from tqdm import tqdm
 from appJar import gui
@@ -12,7 +12,6 @@ import asyncio
 import pandas as pd
 from pathlib import Path
 from fake_useragent import UserAgent
-from collections import Counter
 import lxml
 
 
@@ -20,10 +19,10 @@ current_date = time.strftime("%d-%m-%Y—%H-%M")
 
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     filename='INFO.log',
     filemode='w',
-    format = "%(asctime)s - %(module)s - %(levelname)s - %(funcName)s: %(lineno)d - %(message)s",
+    format="%(asctime)s - %(module)s - %(levelname)s - %(funcName)s: %(lineno)d - %(message)s",
     datefmt='%H:%M:%S'
 )
 logging.debug("ВНИМАНИЕ")
@@ -62,6 +61,8 @@ PARAMS = {
 
 file_extensions = [".xls", ".xlsx", ".xlsm", ".xlsb", ".odf", ".ods", ".odt", ".csv"]
 
+fileTypes = [('all files', '.*'), ('text files', '.txt')]
+
 
 def check_file(src_file):
     """Проверяем выбран ли файл, и его расширение"""
@@ -76,7 +77,6 @@ def check_file(src_file):
     else:
         # проверяем что расширение поддерживается
         extension = Path(src_file).suffix.lower()
-        # print(extension)
         if extension not in file_extensions:
             errors = True
             errors_msgs.append("Выбран не поддерживаемый файл.")
@@ -102,12 +102,10 @@ def auction_numbers(src_file, extension):
 
     column_names = data_frame.columns
     number = data_frame[column_names[0]].tolist()
-    # print(type(number[0]) == int)
     if "№" in str(number[0]):
         number = [str(_.split()[-1]) for _ in number]
     else:
         number = [str(_) for _ in number]
-    # print(type(number[0]))
 
     return number
 
@@ -125,7 +123,6 @@ async def as_info(sem, session, link, auction, retry=2):
 
     try:
         async with session.get(url=link, headers=HEADERS, timeout=60) as response:
-            # print(response.status)
             if response.status == 200:
                 response_text = await response.text()
                 time.sleep(0.03)
@@ -182,13 +179,10 @@ async def gather_data(src_file, extension):
 
         auction_source = auction_numbers(src_file, extension)
         print(f"Собрано с сайта: {len(auctions)}\nВ базе: {len(auction_source)}")
-        # counter = Counter(auction_site)
-        # print(counter)
         auction_site_set = set(auctions)
         auction_source_set = set(auction_source)
         print(f"Уникально собрано с сайта: {len(auction_site_set)}")
         auctions = auction_site_set - auction_source_set
-        # pprint(auctions)
         print(f"Новых аукционов: {len(auctions)}")
 
         for auction in auctions:
@@ -230,8 +224,6 @@ async def gather_data(src_file, extension):
                                 "phone": phone
                             })
 
-        # print(info_table)
-
 
 #############################################################################################
 ####                  Подготовка и сбор номеров аукционов с сайта                        ####
@@ -244,7 +236,6 @@ async def get_page_data(sem, session, pageNumber, retry=2):
 
     try:
         async with session.get(url=URL, headers=HEADERS, params=PARAMS, timeout=60) as response:
-            # print(response.status)
             if response.status == 200:
                 response_text = await response.text()
                 time.sleep(0.03)
@@ -300,7 +291,6 @@ async def as_reestr_numbers(session):
         else:
             number_list = []
         time.sleep(0.1)
-    # print(number_list)
 
     print(f"Собрано {len(number_list)}  ссылок за {round((time.time() - start), 2)} секунд")
     return number_list
@@ -311,7 +301,7 @@ async def as_reestr_numbers(session):
 #############################################################################################
 
 
-def write(save_dir):
+def write(save_file):
     """Записываем полученные данные в xlsx"""
 
     book = openpyxl.Workbook()
@@ -336,16 +326,17 @@ def write(save_dir):
     while True:
 
         try:
-            if save_dir == "":
+            if save_file == "":
                 if app.getCheckBox("Добавить к имени файла текущую дату и время."):
                     book.save(f'new-zakupki-{current_date}.xlsx')
                 else:
                     book.save(f'new-zakupki.xlsx')
             else:
+                save_file = save_file.split(".xlsx")[0]
                 if app.getCheckBox("Добавить к имени файла текущую дату и время."):
-                    book.save(f'{save_dir}/zakupki-{current_date}.xlsx')
+                    book.save(f'{save_file}-{current_date}.xlsx')
                 else:
-                    book.save(f'{save_dir}/zakupki.xlsx')
+                    book.save(f'{save_file}.xlsx')
             book.close()
             break
 
@@ -367,8 +358,6 @@ def press(button):
     """
     start = time.time()
 
-    loop = asyncio.get_event_loop()
-
     if button == "Старт":
         src_file = app.getEntry("Input_File")
         errors, error_msg, extension = check_file(src_file)
@@ -376,22 +365,10 @@ def press(button):
             app.errorBox("Ошибка", "\n".join(error_msg), parent=None)
         else:
             loop = asyncio.get_event_loop()
-            auction_site = loop.run_until_complete(gather_data(src_file, extension))
-            # auction_source = auction_numbers(src_file, extension)
-            # print(f"Собрано: {len(auction_site)}\nВ базе: {len(auction_source)}")
-            # # counter = Counter(auction_site)
-            # # print(counter)
-            # auction_site_set = set(auction_site)
-            # auction_source_set = set(auction_source)
-            # print(f"Уникально собрано с сайта: {len(auction_site_set)}")
-            # auctions = auction_site_set - auction_source_set
-            # pprint(auctions)
-            # # print(f"Уникальных: {len(auctions)}")
+            loop.run_until_complete(gather_data(src_file, extension))
 
-            # info(auctions)
-
-            save_dir = app.getEntry("Output_Directory")
-            write(save_dir)
+            save_file = app.getEntry("Output_file")
+            write(save_file)
 
             print(f"Выполнено за {round((time.time() - start), 2)} секунд")
             print("Программу можно закрыть.")
@@ -400,7 +377,15 @@ def press(button):
         app.stop()
 
 
-# Создать окно пользовательского интерфейса
+def open_file():
+    name_file = app.openBox(title="Открыть файл")
+    print(name_file)
+
+
+#############################################################################################
+####                  Создать окно пользовательского интерфейса                          ####
+#############################################################################################
+
 app = gui(f"Закупки | {current_date}", useTtk=True)
 # app.icon = ("icon.ico")
 app.setTtkTheme("alt")
@@ -410,28 +395,15 @@ app.setSize(500, 200)
 app.addLabel("Выберите исходную базу. | Оставьте пустым для новой выгрузки.")
 app.addFileEntry("Input_File")
 
-app.addLabel("Выберите папку для сохранения")
-app.addDirectoryEntry("Output_Directory")
+app.addLabel("Выберите файл для сохранения")
+# app.addDirectoryEntry("Output_file")  # TODO заменил на выбор файла
+app.addSaveEntry("Output_file")
 
-# app.addLabel("Page Ranges: 1,3,4-10")
-# app.addEntry("Page_Ranges")
 cd = app.addCheckBox("Добавить к имени файла текущую дату и время.")
 
 # Связать кнопки с функцией под названием press
 app.addButtons(["Старт"], press)
 
 
-# def main():
-#     loop = asyncio.get_event_loop()
-#     app.go()
-
-
 if __name__ == "__main__":
-    # start = time.time()
     app.go()
-    # main()
-    # loop = asyncio.get_event_loop()
-
-    # loop.run_until_complete(gather_data())
-    # write(save_dir="")
-    # print(f"Выполнено за за {round((time.time() - start), 2)} секунд")

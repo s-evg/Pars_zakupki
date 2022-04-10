@@ -71,22 +71,26 @@ def check_file(src_file):
 
     # проверяем что выбран файл
     if src_file == "":
-        errors = True
-        errors_msgs.append("Не выбран файл.")
-
-    # проверяем что расширение поддерживается
-    extension = Path(src_file).suffix.lower()
-    print(extension)
-    if extension not in file_extensions:
-        errors = True
-        errors_msgs.append("Выбран не поддерживаемый файл.")
+        errors = False
+        # errors_msgs.append("Не выбран файл.")
+    else:
+        # проверяем что расширение поддерживается
+        extension = Path(src_file).suffix.lower()
+        # print(extension)
+        if extension not in file_extensions:
+            errors = True
+            errors_msgs.append("Выбран не поддерживаемый файл.")
 
     return(errors, errors_msgs, extension)
 
 
 def auction_numbers(src_file, extension):
     """Открываем файл и получаем множество номеров аукционов"""
-    if extension == ".csv":
+
+    if src_file == "":
+        return []
+
+    elif extension == ".csv":
         try:
             data_frame = pd.read_csv(src_file, sep=";", on_bad_lines="warn", encoding="utf-8", engine="python")
 
@@ -98,25 +102,30 @@ def auction_numbers(src_file, extension):
 
     column_names = data_frame.columns
     number = data_frame[column_names[0]].tolist()
-    print(type(number[0]) == int)
+    # print(type(number[0]) == int)
     if "№" in str(number[0]):
         number = [str(_.split()[-1]) for _ in number]
     else:
         number = [str(_) for _ in number]
-    print(type(number[0]))
+    # print(type(number[0]))
 
     return number
+
+
+#############################################################################################
+####                 Подготовка задач и сбор информации о поставщиках                    ####
+#############################################################################################
 
 
 info_table = []
 
 
-async def as_info(sem, session, link, auction, retry=3):
+async def as_info(sem, session, link, auction, retry=2):
     """Получаем информацию поставщиков по множеству номеров аукционов"""
 
     try:
         async with session.get(url=link, headers=HEADERS, timeout=60) as response:
-            print(response.status)
+            # print(response.status)
             if response.status == 200:
                 response_text = await response.text()
                 time.sleep(0.03)
@@ -160,7 +169,7 @@ async def semaphore_info(sem, session, link, auction):
         return await as_info(sem, session, link, auction)
 
 
-async def gather_data():
+async def gather_data(src_file, extension):
     """Подготавливаем задачи для запроса информации поставщиков"""
 
     url = "https://zakupki.gov.ru/epz/contract/contractCard/common-info.html?reestrNumber="
@@ -169,7 +178,18 @@ async def gather_data():
         auctions = await as_reestr_numbers(session)
 
         tasks = []
-        sem = asyncio.Semaphore(10)
+        sem = asyncio.Semaphore(5)
+
+        auction_source = auction_numbers(src_file, extension)
+        print(f"Собрано: {len(auctions)}\nВ базе: {len(auction_source)}")
+        # counter = Counter(auction_site)
+        # print(counter)
+        auction_site_set = set(auctions)
+        auction_source_set = set(auction_source)
+        print(f"Уникально собрано с сайта: {len(auction_site_set)}")
+        auctions = auction_site_set - auction_source_set
+        # pprint(auctions)
+        # print(f"Уникальных: {len(auctions)}")
 
         for auction in auctions:
             link = f"{url}{auction}"
@@ -210,7 +230,7 @@ async def gather_data():
                                 "phone": phone
                             })
 
-        print(info_table)
+        # print(info_table)
 
 
 #############################################################################################
@@ -224,7 +244,7 @@ async def get_page_data(sem, session, pageNumber, retry=2):
 
     try:
         async with session.get(url=URL, headers=HEADERS, params=PARAMS, timeout=60) as response:
-            print(response.status)
+            # print(response.status)
             if response.status == 200:
                 response_text = await response.text()
                 time.sleep(0.03)
@@ -259,7 +279,7 @@ async def as_reestr_numbers(session):
     tasks = []
     number_list = []
 
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(3)
 
     for pageNumber in range(1, 101):
         task = asyncio.create_task(semaphore_age_number(sem, session, pageNumber))
@@ -280,7 +300,7 @@ async def as_reestr_numbers(session):
         else:
             number_list = []
         time.sleep(0.1)
-    print(number_list)
+    # print(number_list)
 
     print(f"Собрано {len(number_list)}  ссылок за {round((time.time() - start), 2)} секунд")
     return number_list
@@ -355,36 +375,39 @@ def press(button):
         if errors:
             app.errorBox("Ошибка", "\n".join(error_msg), parent=None)
         else:
-            auction_site = loop.run_until_complete(gather_data())
-            auction_source = auction_numbers(src_file, extension)
-            print(f"Собрано: {len(auction_site)}\nВ базе: {len(auction_source)}")
-            counter = Counter(auction_site)
-            print(counter)
-            auction_site_set = set(auction_site)
-            auction_source_set = set(auction_source)
-            print(f"Уникально собрано с сайта: {len(auction_site_set)}")
-            auctions = auction_site_set - auction_source_set
-            pprint(auctions)
-            # print(f"Уникальных: {len(auctions)}")
+            loop = asyncio.get_event_loop()
+            auction_site = loop.run_until_complete(gather_data(src_file, extension))
+            # auction_source = auction_numbers(src_file, extension)
+            # print(f"Собрано: {len(auction_site)}\nВ базе: {len(auction_source)}")
+            # # counter = Counter(auction_site)
+            # # print(counter)
+            # auction_site_set = set(auction_site)
+            # auction_source_set = set(auction_source)
+            # print(f"Уникально собрано с сайта: {len(auction_site_set)}")
+            # auctions = auction_site_set - auction_source_set
+            # pprint(auctions)
+            # # print(f"Уникальных: {len(auctions)}")
 
-        info(auctions)
+            # info(auctions)
 
-        save_dir = app.getEntry("Output_Directory")
-        write(save_dir)
+            save_dir = app.getEntry("Output_Directory")
+            write(save_dir)
 
-        print(f"Выполнено за {round((time.time() - start), 2)} секунд")
+            print(f"Выполнено за {round((time.time() - start), 2)} секунд")
+            print("Программу можно закрыть.")
 
     else:
         app.stop()
 
 
 # Создать окно пользовательского интерфейса
-app = gui(f"Закупки | АС | {current_date}", useTtk=True)
+app = gui(f"Закупки | {current_date}", useTtk=True)
+# app.icon = ("icon.ico")
 app.setTtkTheme("alt")
 app.setSize(500, 200)
 
 # Добавить интерактивные компоненты
-app.addLabel("Выберите исходную базу")
+app.addLabel("Выберите исходную базу. | Оставьте пустым для новой выгрузки.")
 app.addFileEntry("Input_File")
 
 app.addLabel("Выберите папку для сохранения")
@@ -404,9 +427,11 @@ app.addButtons(["Старт"], press)
 
 
 if __name__ == "__main__":
-    start = time.time()
-    # app.go()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(gather_data())
-    write(save_dir="")
-    print(f"Выполнено за за {round((time.time() - start), 2)} секунд")
+    # start = time.time()
+    app.go()
+    # main()
+    # loop = asyncio.get_event_loop()
+
+    # loop.run_until_complete(gather_data())
+    # write(save_dir="")
+    # print(f"Выполнено за за {round((time.time() - start), 2)} секунд")

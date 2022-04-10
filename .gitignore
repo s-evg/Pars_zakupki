@@ -3,7 +3,10 @@ source
 venv
 —__—
 __pycache__/
+*/
 *.log
 *.csv
 *.xlsx
 *.txt
+*.spec
+*.ico
