@@ -19,7 +19,7 @@ current_date = time.strftime("%d-%m-%Y—%H-%M")
 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     filename='INFO.log',
     filemode='w',
     format="%(asctime)s - %(module)s - %(levelname)s - %(funcName)s: %(lineno)d - %(message)s",
@@ -73,6 +73,7 @@ def check_file(src_file):
     # проверяем что выбран файл
     if src_file == "":
         errors = False
+        # если файл не выбран, то собирается новая выгрузка
         # errors_msgs.append("Не выбран файл.")
     else:
         # проверяем что расширение поддерживается
@@ -84,11 +85,11 @@ def check_file(src_file):
     return(errors, errors_msgs, extension)
 
 
-def auction_numbers(src_file, extension):
-    """Открываем файл и получаем множество номеров аукционов"""
+def read_file(src_file, extension):
+    """Открываем файл и получаем множество номеров аукционов, E-mail"""
 
     if src_file == "":
-        return []
+        return([], [])
 
     elif extension == ".csv":
         try:
@@ -102,12 +103,13 @@ def auction_numbers(src_file, extension):
 
     column_names = data_frame.columns
     number = data_frame[column_names[0]].tolist()
+    e_mails = data_frame[column_names[3]].tolist()
     if "№" in str(number[0]):
         number = [str(_.split()[-1]) for _ in number]
     else:
         number = [str(_) for _ in number]
 
-    return number
+    return(number, e_mails, data_frame)
 
 
 #############################################################################################
@@ -137,13 +139,13 @@ async def as_info(sem, session, link, auction, retry=2):
                 return False
             else:
                 print(f"Сайт не доступен. Ошибка «{response.status}» Проверьте подключение к интернету.")
-                print(f"Переподключение через 30 секунд.\nСтраница {link} | retry={retry}")
+                print(f"Переподключение через 30 секунд.\nСтраница {link} | Попыток=> {retry}")
                 time.sleep(30)
                 return await as_info(sem, session, link, auction, retry=(retry - 1))
 
     except Exception as ex:
         if retry:
-            print(f"ОЙ!! Ошибка соединения. Переподключение через 30 секунд.\nСтраница {link} | retry={retry}")
+            print(f"ОЙ!! Ошибка соединения. Переподключение через 30 секунд.\nСтраница {link} | Попыток=> {retry}")
             print(ex)
             time.sleep(30)
             return await as_info(sem, session, link, auction, retry=(retry - 1))
@@ -176,14 +178,20 @@ async def gather_data(src_file, extension):
 
         tasks = []
         sem = asyncio.Semaphore(5)
+        email_check = app.getCheckBox("Добавить только аукционы, по E-mail отсутствующим в базе.")
 
-        auction_source = auction_numbers(src_file, extension)
+        auction_source, e_mails_source, date_frame = read_file(src_file, extension)
         print(f"Собрано с сайта: {len(auctions)}\nВ базе: {len(auction_source)}")
         auction_site_set = set(auctions)
         auction_source_set = set(auction_source)
+        e_mails_source = set(e_mails_source)
         print(f"Уникально собрано с сайта: {len(auction_site_set)}")
-        auctions = auction_site_set - auction_source_set
-        print(f"Новых аукционов: {len(auctions)}")
+
+        if email_check:
+            print(f"Включена фильтрация по E-mail, будут проверены все {len(auction_site_set)} аукционов.")
+        else:
+            auctions = auction_site_set - auction_source_set
+            print(f"Новых аукционов: {len(auctions)}")
 
         for auction in auctions:
             link = f"{url}{auction}"
@@ -208,8 +216,13 @@ async def gather_data(src_file, extension):
                     for provider in providers:
                         if "Телефон, электронная почта" in provider.get_text():
                             td = provider.findAll("td")
-                            name = td[0].get_text().split("\n")[1].strip()
                             email = td[-2].get_text().split("\n")[4].strip()
+                            # Проверяем включена ли опция проверки e-mail
+                            if email_check:
+                                # Есть ли полученный e-mail базе, если нет то добавляем этот аукцион
+                                if email in e_mails_source:
+                                    continue
+                            name = td[0].get_text().split("\n")[1].strip()
                             phone = td[-2].get_text().split("\n")[3].strip()
                             inn = td[0].get_text().split("\n\n")
                             for _ in inn:
@@ -241,13 +254,13 @@ async def get_page_data(sem, session, pageNumber, retry=2):
                 time.sleep(0.03)
             else:
                 print(f"Сайт не доступен. Ошибка «{response.status}» Проверьте подключение к интернету.")
-                print(f"Переподключение через 20 секунд.\nСтраница {pageNumber} | retry={retry}")
+                print(f"Переподключение через 20 секунд.\nСтраница {pageNumber} | Попыток=> {retry}")
                 time.sleep(20)
                 return await get_page_data(sem, session, pageNumber, retry=(retry - 1))
 
     except Exception as ex:
         if retry:
-            print(f"ОЙ!! Ошибка соединения. Переподключение через 20 секунд.\nСтраница {pageNumber} | retry={retry}")
+            print(f"ОЙ!! Ошибка соединения. Переподключение через 20 секунд.\nСтраница {pageNumber} | Попыток=> {retry}")
             print(ex)
             time.sleep(20)
             return await get_page_data(sem, session, pageNumber, retry=(retry - 1))
@@ -345,6 +358,61 @@ def write(save_file):
             input('Закройте Exel, затем вернитесь сюда и нажмите ENTER')
 
 
+#
+#
+#
+
+
+def add_write(src_file, save_file):
+    """Создаём новый файл xlsx записав в него новые полученные данные"""
+
+    book = openpyxl.load_workbook(src_file)
+    sheet = book.active
+
+
+    # book = openpyxl.Workbook()
+    # sheet = book.active
+
+    sheet['A1'] = 'Номер аукциона'
+    sheet['B1'] = 'Наименование компании'
+    sheet['C1'] = 'ИНН'
+    sheet['D1'] = 'E-mail'
+    sheet['E1'] = 'Телефон'
+
+    row = 2
+
+    for _ in info_table:
+        sheet.append([
+            _["number"],
+            _["name"],
+            _["inn"],
+            _["e-mail"],
+            _["phone"],
+        ])
+        row += 1
+
+    while True:
+
+        try:
+            if save_file == "":
+                if app.getCheckBox("Добавить к имени файла текущую дату и время."):
+                    book.save(f'new-zakupki-{current_date}.xlsx')
+                else:
+                    book.save(f'new-zakupki.xlsx')
+            else:
+                save_file = save_file.split(".xlsx")[0]
+                if app.getCheckBox("Добавить к имени файла текущую дату и время."):
+                    book.save(f'{save_file}-{current_date}.xlsx')
+                else:
+                    book.save(f'{save_file}.xlsx')
+            book.close()
+            break
+
+        except PermissionError:
+            print('Кажется у Вас открыт файл в Exel,\nПожалуйста, закройте его, и тогда я смогу сохранить.')
+            input('Закройте Exel, затем вернитесь сюда и нажмите ENTER')
+
+
 #############################################################################################
 ####                            Обработка нажатий кнопок                                 ####
 #############################################################################################
@@ -368,9 +436,17 @@ def press(button):
             loop.run_until_complete(gather_data(src_file, extension))
 
             save_file = app.getEntry("Output_file")
-            write(save_file)
 
-            print(f"Выполнено за {round((time.time() - start), 2)} секунд")
+            # Создать новый файл, или дозаписать инфу в базу, создав новый файл
+            if app.getCheckBox("Создать новую базу, добавив в неё новую информацию (доступно только для .xlsx)"):
+                add_write(src_file, save_file)
+            else:
+                write(save_file)
+
+            # print(f"Выполнено за {round((time.time() - start), 2)} секунд")
+            stop = time.time() - start
+            stop = time.gmtime(stop)
+            print(f"Выполнено за {time.strftime('%H:%M:%S', stop)}")
             print("Программу можно закрыть.")
 
     else:
@@ -399,7 +475,9 @@ app.addLabel("Выберите файл для сохранения")
 # app.addDirectoryEntry("Output_file")  # TODO заменил на выбор файла
 app.addSaveEntry("Output_file")
 
-cd = app.addCheckBox("Добавить к имени файла текущую дату и время.")
+app.addCheckBox("Добавить к имени файла текущую дату и время.")
+app.addCheckBox("Добавить только аукционы, по E-mail отсутствующим в базе.")
+app.addCheckBox("Создать новую базу, добавив в неё новую информацию (доступно только для .xlsx)")
 
 # Связать кнопки с функцией под названием press
 app.addButtons(["Старт"], press)
