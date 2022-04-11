@@ -15,9 +15,6 @@ from fake_useragent import UserAgent
 import lxml
 
 
-current_date = time.strftime("%d-%m-%Y—%H-%M")
-
-
 logging.basicConfig(
     level=logging.DEBUG,
     filename='INFO.log',
@@ -103,7 +100,7 @@ def read_file(src_file, extension):
 
     column_names = data_frame.columns
     number = data_frame[column_names[0]].tolist()
-    e_mails = data_frame[column_names[3]].tolist()
+    e_mails = data_frame[column_names[4]].tolist()
     if "№" in str(number[0]):
         number = [str(_.split()[-1]) for _ in number]
     else:
@@ -222,19 +219,28 @@ async def gather_data(src_file, extension):
                                 # Есть ли полученный e-mail базе, если нет то добавляем этот аукцион
                                 if email in e_mails_source:
                                     continue
-                            name = td[0].get_text().split("\n")[1].strip()
-                            phone = td[-2].get_text().split("\n")[3].strip()
-                            inn = td[0].get_text().split("\n\n")
-                            for _ in inn:
-                                if "инн" in _.lower():
-                                    inn = _.split("\n")[-1]
+                                else:
+                                    # print(f"Добавлен новый E-mail: {email} | Аукцион {num}")
+                                    name = td[0].get_text().split("\n")[1].strip()
+                                    phone = td[-2].get_text().split("\n")[3].strip()
+                                    inn = td[0].get_text().split("\n\n")
+                                    for _ in inn:
+                                        if "инн" in _.lower():
+                                            inn = _.split("\n")[-1]
+                            else:
+                                name = td[0].get_text().split("\n")[1].strip()
+                                phone = td[-2].get_text().split("\n")[3].strip()
+                                inn = td[0].get_text().split("\n\n")
+                                for _ in inn:
+                                    if "инн" in _.lower():
+                                        inn = _.split("\n")[-1]
 
                             info_table.append({
                                 "number": num,
                                 "name": name,
                                 "inn": inn,
+                                "phone": phone,
                                 "e-mail": email,
-                                "phone": phone
                             })
 
 
@@ -317,6 +323,8 @@ async def as_reestr_numbers(session):
 def write(save_file):
     """Записываем полученные данные в xlsx"""
 
+    current_date = time.strftime("%d-%m-%Y—%H-%M")
+
     book = openpyxl.Workbook()
     sheet = book.active
 
@@ -366,8 +374,11 @@ def write(save_file):
 def add_write(src_file, save_file):
     """Создаём новый файл xlsx записав в него новые полученные данные"""
 
+    current_date = time.strftime("%d-%m-%Y—%H-%M")
+
     book = openpyxl.load_workbook(src_file)
     sheet = book.active
+    rows = sheet.max_row
 
 
     # book = openpyxl.Workbook()
@@ -376,37 +387,46 @@ def add_write(src_file, save_file):
     sheet['A1'] = 'Номер аукциона'
     sheet['B1'] = 'Наименование компании'
     sheet['C1'] = 'ИНН'
-    sheet['D1'] = 'E-mail'
-    sheet['E1'] = 'Телефон'
+    sheet['D1'] = 'Телефон'
+    sheet['E1'] = 'E-mail'
 
-    row = 2
+    row = rows + 1
 
+    # добавляем пустые строки между старыми и новыми данными
+    sheet.append(["", "", "", "", ""])
+
+    count = len(info_table)
     for _ in info_table:
         sheet.append([
             _["number"],
             _["name"],
             _["inn"],
-            _["e-mail"],
             _["phone"],
+            _["e-mail"]
         ])
         row += 1
 
-    while True:
+    run = True
+    while run:
 
         try:
             if save_file == "":
                 if app.getCheckBox("Добавить к имени файла текущую дату и время."):
-                    book.save(f'new-zakupki-{current_date}.xlsx')
+                    sf = f'new-zakupki-{current_date}.xlsx'
                 else:
-                    book.save(f'new-zakupki.xlsx')
+                    sf = f'new-zakupki.xlsx'
             else:
                 save_file = save_file.split(".xlsx")[0]
                 if app.getCheckBox("Добавить к имени файла текущую дату и время."):
-                    book.save(f'{save_file}-{current_date}.xlsx')
+                    sf = f'{save_file}-{current_date}.xlsx'
                 else:
-                    book.save(f'{save_file}.xlsx')
+                    sf = f'{save_file}.xlsx'
+
+            book.save(sf)
             book.close()
-            break
+
+            print(f"Добавлено {count} новых значений.\nДанные сохранены в файл:\n{sf}")
+            run = False
 
         except PermissionError:
             print('Кажется у Вас открыт файл в Exel,\nПожалуйста, закройте его, и тогда я смогу сохранить.')
@@ -448,6 +468,7 @@ def press(button):
             stop = time.gmtime(stop)
             print(f"Выполнено за {time.strftime('%H:%M:%S', stop)}")
             print("Программу можно закрыть.")
+            info_table.clear()
 
     else:
         app.stop()
@@ -462,7 +483,11 @@ def open_file():
 ####                  Создать окно пользовательского интерфейса                          ####
 #############################################################################################
 
-app = gui(f"Закупки | {current_date}", useTtk=True)
+# оказывает текущее время
+def showTime():
+    app.setStatusbar(time.strftime("%X"))
+
+app = gui(f"Закупки", useTtk=True)
 # app.icon = ("icon.ico")
 app.setTtkTheme("alt")
 app.setSize(500, 200)
@@ -481,6 +506,11 @@ app.addCheckBox("Создать новую базу, добавив в неё н
 
 # Связать кнопки с функцией под названием press
 app.addButtons(["Старт"], press)
+
+# add a statusbar to show the time
+app.addStatusbar(side="RIGHT")
+app.registerEvent(showTime)
+# app.stopFunction = logoutFunction
 
 
 if __name__ == "__main__":
